@@ -86,7 +86,6 @@ export async function streamChat(
     while (true) {
       const { done, value } = await reader.read();
       if (done) {
-        console.log("[v0] Reader done, fullResponse length:", fullResponse.length);
         break;
       }
 
@@ -95,36 +94,29 @@ export async function streamChat(
       buffer = lines.pop() || "";
 
       for (const line of lines) {
-        console.log("[v0] Raw SSE line:", line);
         if (line.startsWith("data: ")) {
           const data = line.slice(6);
-          console.log("[v0] Data payload:", data);
           if (data === "[DONE]") {
-            console.log("[v0] Received [DONE], calling onDone with fullResponse length:", fullResponse.length, "conversationId:", newConversationId);
             callbacks.onDone(fullResponse, newConversationId);
             return;
           }
           try {
             const parsed = JSON.parse(data);
-            console.log("[v0] Parsed SSE:", parsed);
             
             // Capture new conversation ID first (sent at the start of stream)
             if (parsed.conversation_id && !newConversationId) {
-              console.log("[v0] Got conversation_id:", parsed.conversation_id);
               newConversationId = parsed.conversation_id;
               continue;
             }
             
             // Handle tool call events
             if (parsed.type === "tool_call" && callbacks.onToolCall) {
-              console.log("[v0] Got tool_call:", parsed.tool);
               callbacks.onToolCall(parsed as ToolCall);
               continue;
             }
             
             // Handle final event (tool execution complete summary)
             if (parsed.type === "final") {
-              console.log("[v0] Got final event");
               // The final event contains tool_calls summary, we can ignore it
               // since we've already handled individual tool calls
               continue;
@@ -132,18 +124,15 @@ export async function streamChat(
             
             // Handle regular content
             if (parsed.content) {
-              console.log("[v0] Got content token:", parsed.content.substring(0, 50));
               fullResponse += parsed.content;
               callbacks.onToken(parsed.content);
             }
-          } catch (e) {
-            console.log("[v0] Failed to parse SSE data:", data, e);
+          } catch {
             // ignore malformed chunks
           }
         }
       }
     }
-    console.log("[v0] Stream ended without [DONE], calling onDone anyway");
     callbacks.onDone(fullResponse, newConversationId);
   } catch (error) {
     callbacks.onError(

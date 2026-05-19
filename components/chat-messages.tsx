@@ -5,7 +5,7 @@ import { Message, ToolCall } from '@/lib/api'
 import { cn } from '@/lib/utils'
 import { Copy, Check } from 'lucide-react'
 import { HtmlArtifact } from './html-artifact'
-import { ToolCallCard } from './tool-call-card'
+import { GenUIRenderer } from './gen-ui'
 import { FilePreview, FileAttachmentList } from './file-attachment'
 
 interface ChatMessagesProps {
@@ -52,7 +52,7 @@ export function ChatMessages({
           <div className="flex justify-start">
             <div className="max-w-[85%] flex flex-col gap-2">
               {toolCalls.map((tc, i) => (
-                <ToolCallCard key={i} toolCall={tc} />
+                <GenUIRenderer key={i} toolCall={tc} isRunning={isStreaming} />
               ))}
             </div>
           </div>
@@ -117,7 +117,7 @@ function MessageBubble({ message, index }: { message: Message; index: number }) 
         {embeddedToolCalls.length > 0 && (
           <div className="flex flex-col gap-2">
             {embeddedToolCalls.map((tc, i) => (
-              <ToolCallCard key={i} toolCall={tc} />
+              <GenUIRenderer key={i} toolCall={tc} />
             ))}
           </div>
         )}

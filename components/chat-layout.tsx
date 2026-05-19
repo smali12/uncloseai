@@ -140,15 +140,12 @@ export function ChatLayout() {
       currentConversationId,
       {
         onToken: (token) => {
-          console.log("[v0] onToken called, token length:", token.length);
           setStreamingContent((prev) => prev + token);
         },
         onToolCall: (tc) => {
-          console.log("[v0] onToolCall called:", tc.tool);
           setToolCalls((prev) => [...prev, tc]);
         },
         onDone: async (fullText, serverConversationId) => {
-          console.log("[v0] onDone called, fullText length:", fullText.length, "serverConversationId:", serverConversationId);
           // Resolve the real conversation ID — either the one the server
           // returned in the stream, or the one we already had.
           const resolvedId = serverConversationId || currentConversationId || null;
@@ -156,7 +153,6 @@ export function ChatLayout() {
           // If no content was streamed but we have a conversation ID,
           // fetch the latest messages from the API (the backend saved the response to DB)
           if (fullText.length === 0 && resolvedId) {
-            console.log("[v0] No streamed content, fetching from API...");
             try {
               // Small delay to ensure backend has saved the response
               await new Promise((resolve) => setTimeout(resolve, 500));
@@ -168,13 +164,12 @@ export function ChatLayout() {
                 .find((m) => m.role === "assistant");
               
               if (latestAssistant) {
-                console.log("[v0] Found assistant message from API, length:", latestAssistant.content.length);
                 flushSync(() => {
                   setMessages(data.messages);
                 });
               }
             } catch (error) {
-              console.error("[v0] Failed to fetch conversation:", error);
+              console.error("Failed to fetch conversation:", error);
             }
             
             // Clear streaming state
