@@ -140,12 +140,15 @@ export function ChatLayout() {
       currentConversationId,
       {
         onToken: (token) => {
+          console.log("[v0] onToken called, token length:", token.length);
           setStreamingContent((prev) => prev + token);
         },
         onToolCall: (tc) => {
+          console.log("[v0] onToolCall called:", tc.tool);
           setToolCalls((prev) => [...prev, tc]);
         },
         onDone: async (fullText, serverConversationId) => {
+          console.log("[v0] onDone called, fullText length:", fullText.length, "serverConversationId:", serverConversationId);
           // Resolve the real conversation ID — either the one the server
           // returned in the stream, or the one we already had.
           const resolvedId = serverConversationId || currentConversationId || null;
