@@ -153,28 +153,60 @@ export function ChatLayout() {
           // returned in the stream, or the one we already had.
           const resolvedId = serverConversationId || currentConversationId || null;
 
-          const assistantMessage: Message = {
-            id: `temp-assistant-${Date.now()}`,
-            conversation_id: resolvedId || "",
-            user_id: "",
-            role: "assistant",
-            content: fullText,
-            model,
-            created_at: new Date().toISOString(),
-          };
-          
-          // Use flushSync to ensure the message is rendered synchronously
-          // before we clear the streaming state. This prevents the UI from
-          // briefly showing nothing between streaming and the final message.
-          flushSync(() => {
-            setMessages((prev) => [...prev, assistantMessage]);
-          });
-          
-          // Clear streaming state after message is added
-          setStreamingContent("");
-          setToolCalls([]);
-          setIsStreaming(false);
-          setAbortController(null);
+          // If no content was streamed but we have a conversation ID,
+          // fetch the latest messages from the API (the backend saved the response to DB)
+          if (fullText.length === 0 && resolvedId) {
+            console.log("[v0] No streamed content, fetching from API...");
+            try {
+              // Small delay to ensure backend has saved the response
+              await new Promise((resolve) => setTimeout(resolve, 500));
+              
+              const data = await api.getConversation(resolvedId);
+              // Find the latest assistant message
+              const latestAssistant = [...data.messages]
+                .reverse()
+                .find((m) => m.role === "assistant");
+              
+              if (latestAssistant) {
+                console.log("[v0] Found assistant message from API, length:", latestAssistant.content.length);
+                flushSync(() => {
+                  setMessages(data.messages);
+                });
+              }
+            } catch (error) {
+              console.error("[v0] Failed to fetch conversation:", error);
+            }
+            
+            // Clear streaming state
+            setStreamingContent("");
+            setToolCalls([]);
+            setIsStreaming(false);
+            setAbortController(null);
+          } else {
+            // Normal flow - we have streamed content
+            const assistantMessage: Message = {
+              id: `temp-assistant-${Date.now()}`,
+              conversation_id: resolvedId || "",
+              user_id: "",
+              role: "assistant",
+              content: fullText,
+              model,
+              created_at: new Date().toISOString(),
+            };
+            
+            // Use flushSync to ensure the message is rendered synchronously
+            // before we clear the streaming state. This prevents the UI from
+            // briefly showing nothing between streaming and the final message.
+            flushSync(() => {
+              setMessages((prev) => [...prev, assistantMessage]);
+            });
+            
+            // Clear streaming state after message is added
+            setStreamingContent("");
+            setToolCalls([]);
+            setIsStreaming(false);
+            setAbortController(null);
+          }
 
           // If the server gave us a brand-new conversation ID, select it now
           // so the sidebar highlights the right item and subsequent messages
