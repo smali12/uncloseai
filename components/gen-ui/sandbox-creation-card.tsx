@@ -24,13 +24,14 @@ interface SandboxCreationArgs {
 
 interface SandboxCreationCardProps {
   args: SandboxCreationArgs;
-  result: {
+  result?: {
     success: boolean;
     sandbox_id?: string;
     url?: string;
     error?: string;
     execution_time_ms?: number;
   };
+  isRunning?: boolean;
 }
 
 const LANGUAGE_COLORS: Record<string, { bg: string; text: string; border: string }> = {
@@ -51,7 +52,7 @@ const FRAMEWORK_ICONS: Record<string, string> = {
   FastAPI: "⚡",
 };
 
-export function SandboxCreationCard({ args, result }: SandboxCreationCardProps) {
+export function SandboxCreationCard({ args, result, isRunning }: SandboxCreationCardProps) {
   const [isExpanded, setIsExpanded] = useState(true);
   
   const langStyle = LANGUAGE_COLORS[args.language] || { 
@@ -60,6 +61,9 @@ export function SandboxCreationCard({ args, result }: SandboxCreationCardProps) 
     border: "border-border"
   };
   const frameworkIcon = args.framework ? FRAMEWORK_ICONS[args.framework] || "📦" : null;
+
+  // Determine status based on result and isRunning
+  const status = isRunning ? "running" : result?.success ? "success" : result?.error ? "error" : "running";
 
   return (
     <div className="rounded-xl border border-border bg-card overflow-hidden my-3">
@@ -83,12 +87,12 @@ export function SandboxCreationCard({ args, result }: SandboxCreationCardProps) 
         </div>
 
         <div className="flex items-center gap-3">
-          {result.success ? (
+          {status === "success" ? (
             <span className="flex items-center gap-1.5 text-xs text-emerald-500 font-medium bg-emerald-500/10 px-2.5 py-1 rounded-full">
               <Check className="h-3.5 w-3.5" />
               Created
             </span>
-          ) : result.error ? (
+          ) : status === "error" ? (
             <span className="flex items-center gap-1.5 text-xs text-red-500 font-medium bg-red-500/10 px-2.5 py-1 rounded-full">
               <X className="h-3.5 w-3.5" />
               Failed
@@ -189,7 +193,7 @@ export function SandboxCreationCard({ args, result }: SandboxCreationCardProps) 
           )}
 
           {/* Result URL */}
-          {result.success && result.url && (
+          {result?.success && result.url && (
             <div className="px-4 pb-4">
               <a
                 href={result.url}
@@ -204,7 +208,7 @@ export function SandboxCreationCard({ args, result }: SandboxCreationCardProps) 
           )}
 
           {/* Error */}
-          {result.error && (
+          {result?.error && (
             <div className="px-4 pb-4">
               <div className="rounded-lg bg-red-500/5 border border-red-500/20 p-3">
                 <p className="text-xs text-red-400 font-mono">
@@ -215,7 +219,7 @@ export function SandboxCreationCard({ args, result }: SandboxCreationCardProps) 
           )}
 
           {/* Execution Time */}
-          {result.execution_time_ms && (
+          {result?.execution_time_ms && (
             <div className="px-4 pb-3 flex justify-end">
               <span className="text-[10px] text-muted-foreground">
                 Completed in {result.execution_time_ms.toFixed(0)}ms

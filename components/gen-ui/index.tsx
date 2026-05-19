@@ -18,18 +18,36 @@ interface GenUIRendererProps {
  */
 export function GenUIRenderer({ toolCall, isRunning }: GenUIRendererProps) {
   const { tool, args, result } = toolCall;
+  const toolLower = tool.toLowerCase();
 
-  // Sandbox creation
-  if (tool === "create_sandbox") {
+  // Sandbox/Dashboard creation - match various naming patterns
+  if (
+    toolLower.includes("sandbox") ||
+    toolLower.includes("dashboard") ||
+    toolLower.includes("create_app") ||
+    toolLower.includes("createapp") ||
+    toolLower.includes("createreact") ||
+    toolLower.includes("create_react") ||
+    tool === "create_sandbox" ||
+    tool === "codeSandbox"
+  ) {
+    // Extract info from various argument formats
+    const sandboxArgs = {
+      name: (args as Record<string, unknown>)?.name as string || 
+            (args as Record<string, unknown>)?.project_name as string ||
+            tool.replace(/^create/i, '').replace(/Dashboard$/i, ' Dashboard').trim() ||
+            "New Project",
+      language: (args as Record<string, unknown>)?.language as string || "JavaScript",
+      framework: (args as Record<string, unknown>)?.framework as string || 
+                 (toolLower.includes("react") ? "React" : undefined),
+      description: (args as Record<string, unknown>)?.description as string,
+      components: (args as Record<string, unknown>)?.components as string[] ||
+                  (args as Record<string, unknown>)?.tools as string[],
+    };
+
     return (
       <SandboxCreationCard
-        args={args as {
-          name: string;
-          language: string;
-          framework?: string;
-          description?: string;
-          components?: string[];
-        }}
+        args={sandboxArgs}
         result={result as {
           success: boolean;
           sandbox_id?: string;
@@ -37,6 +55,7 @@ export function GenUIRenderer({ toolCall, isRunning }: GenUIRendererProps) {
           error?: string;
           execution_time_ms?: number;
         }}
+        isRunning={isRunning}
       />
     );
   }

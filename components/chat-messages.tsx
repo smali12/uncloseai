@@ -152,13 +152,33 @@ function MessageBubble({ message, index }: { message: Message; index: number }) 
 // Parse message content for embedded tool call markers
 function parseMessageForToolCalls(content: string): { content: string; embeddedToolCalls: ToolCall[] } {
   const toolCalls: ToolCall[] = []
-  
-  // Look for tool call JSON blocks: ```tool_call\n{...}\n```
-  const toolCallRegex = /```tool_call\n([\s\S]*?)\n```/g
-  let match
   let cleanContent = content
 
-  while ((match = toolCallRegex.exec(content)) !== null) {
+  // Pattern 1: <tool_call>...</tool_call> format (from backend)
+  const xmlToolCallRegex = /<tool_call>\s*([\s\S]*?)\s*<\/tool_call>/g
+  let match
+  
+  while ((match = xmlToolCallRegex.exec(content)) !== null) {
+    try {
+      const parsed = JSON.parse(match[1])
+      // Convert {name, arguments} format to ToolCall format
+      const toolCall: ToolCall = {
+        type: 'tool_call',
+        tool: parsed.name || parsed.tool || 'unknown',
+        args: parsed.arguments || parsed.args || {},
+        result: parsed.result
+      }
+      toolCalls.push(toolCall)
+    } catch {
+      // Not valid JSON, skip
+    }
+    cleanContent = cleanContent.replace(match[0], '')
+  }
+
+  // Pattern 2: ```tool_call\n{...}\n``` format (legacy)
+  const codeBlockRegex = /```tool_call\n([\s\S]*?)\n```/g
+  
+  while ((match = codeBlockRegex.exec(content)) !== null) {
     try {
       const parsed = JSON.parse(match[1])
       if (parsed.type === 'tool_call' || parsed.tool) {
