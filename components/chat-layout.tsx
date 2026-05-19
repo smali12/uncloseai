@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import { flushSync } from "react-dom";
 import { useRouter } from "next/navigation";
 import { api, Conversation, Message, ToolCall } from "@/lib/api";
 import { streamChat } from "@/lib/chat";
@@ -139,19 +140,12 @@ export function ChatLayout() {
       currentConversationId,
       {
         onToken: (token) => {
-
-          console.log("[v0] Token received:", token.slice(0, 50));
           setStreamingContent((prev) => prev + token);
         },
         onToolCall: (tc) => {
-          console.log("[v0] Tool call in layout:", tc.tool);
           setToolCalls((prev) => [...prev, tc]);
         },
         onDone: async (fullText, serverConversationId) => {
-          console.log("[v0] onDone called, fullText length:", fullText.length, "serverConvId:", serverConversationId);
-          setIsStreaming(false);
-          setAbortController(null);
-
           // Resolve the real conversation ID — either the one the server
           // returned in the stream, or the one we already had.
           const resolvedId = serverConversationId || currentConversationId || null;
@@ -165,9 +159,19 @@ export function ChatLayout() {
             model,
             created_at: new Date().toISOString(),
           };
-          setMessages((prev) => [...prev, assistantMessage]);
+          
+          // Use flushSync to ensure the message is rendered synchronously
+          // before we clear the streaming state. This prevents the UI from
+          // briefly showing nothing between streaming and the final message.
+          flushSync(() => {
+            setMessages((prev) => [...prev, assistantMessage]);
+          });
+          
+          // Clear streaming state after message is added
           setStreamingContent("");
           setToolCalls([]);
+          setIsStreaming(false);
+          setAbortController(null);
 
           // If the server gave us a brand-new conversation ID, select it now
           // so the sidebar highlights the right item and subsequent messages

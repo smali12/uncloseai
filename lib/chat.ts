@@ -69,13 +69,10 @@ export async function streamChat(
     });
 
 
-    console.log("[v0] Chat response status:", response.status, response.ok);
-
     if (!response.ok) {
       const err = await response
         .json()
         .catch(() => ({ detail: "Stream error" }));
-      console.log("[v0] Chat error response:", err);
       callbacks.onError(new Error(err.detail));
       return;
     }
@@ -89,7 +86,6 @@ export async function streamChat(
     while (true) {
       const { done, value } = await reader.read();
       if (done) {
-        console.log("[v0] Stream done (reader finished), fullResponse length:", fullResponse.length);
         break;
       }
 
@@ -98,22 +94,17 @@ export async function streamChat(
       buffer = lines.pop() || "";
 
       for (const line of lines) {
-        console.log("[v0] Raw line:", JSON.stringify(line));
         if (line.startsWith("data: ")) {
           const data = line.slice(6);
-          console.log("[v0] Parsed data:", data);
           if (data === "[DONE]") {
-            console.log("[v0] Received [DONE], calling onDone with conversationId:", newConversationId);
             callbacks.onDone(fullResponse, newConversationId);
             return;
           }
           try {
             const parsed = JSON.parse(data);
-            console.log("[v0] Parsed JSON:", parsed);
             
             // Handle tool call events
             if (parsed.type === "tool_call" && callbacks.onToolCall) {
-              console.log("[v0] Tool call received:", parsed.tool);
               callbacks.onToolCall(parsed as ToolCall);
               continue;
             }
@@ -126,20 +117,16 @@ export async function streamChat(
             
             // Capture new conversation ID
             if (parsed.conversation_id && !conversationId) {
-              console.log("[v0] New conversation ID from stream:", parsed.conversation_id);
               newConversationId = parsed.conversation_id;
             }
           } catch {
-            console.log("[v0] Failed to parse JSON from:", data);
             // ignore malformed chunks
           }
         }
       }
     }
-    console.log("[v0] Stream ended without [DONE], calling onDone");
     callbacks.onDone(fullResponse, newConversationId);
   } catch (error) {
-    console.log("[v0] Stream error:", error);
     callbacks.onError(
       error instanceof Error ? error : new Error("Unknown error")
     );
