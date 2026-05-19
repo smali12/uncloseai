@@ -103,9 +103,22 @@ export async function streamChat(
           try {
             const parsed = JSON.parse(data);
             
+            // Capture new conversation ID first (sent at the start of stream)
+            if (parsed.conversation_id && !newConversationId) {
+              newConversationId = parsed.conversation_id;
+              continue;
+            }
+            
             // Handle tool call events
             if (parsed.type === "tool_call" && callbacks.onToolCall) {
               callbacks.onToolCall(parsed as ToolCall);
+              continue;
+            }
+            
+            // Handle final event (tool execution complete summary)
+            if (parsed.type === "final") {
+              // The final event contains tool_calls summary, we can ignore it
+              // since we've already handled individual tool calls
               continue;
             }
             
@@ -113,11 +126,6 @@ export async function streamChat(
             if (parsed.content) {
               fullResponse += parsed.content;
               callbacks.onToken(parsed.content);
-            }
-            
-            // Capture new conversation ID
-            if (parsed.conversation_id && !conversationId) {
-              newConversationId = parsed.conversation_id;
             }
           } catch {
             // ignore malformed chunks
