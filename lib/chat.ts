@@ -16,7 +16,6 @@ export interface ChatOptions {
   title?: string;
   enableTools?: boolean;
   enableCodeExecution?: boolean;
-  fileIds?: string[];
 }
 
 export async function streamChat(
@@ -44,7 +43,6 @@ export async function streamChat(
     title,
     enableTools = true,
     enableCodeExecution = false,
-    fileIds,
   } = options;
 
   try {
@@ -64,7 +62,6 @@ export async function streamChat(
         title,
         enable_tools: enableTools,
         enable_code_execution: enableCodeExecution,
-        file_ids: fileIds,
       }),
     });
 

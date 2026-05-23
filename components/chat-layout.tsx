@@ -90,8 +90,6 @@ export function ChatLayout() {
   };
 
   const handleSendMessage = async (content: string, files?: File[]) => {
-    let fileIds: string[] | undefined;
-
     // Upload files first if any
     if (files && files.length > 0) {
       setIsUploading(true);
@@ -106,9 +104,7 @@ export function ChatLayout() {
           await loadConversations();
         }
 
-        const uploadPromises = files.map((file) => api.uploadFile(file, convId!));
-        const uploadedFiles = await Promise.all(uploadPromises);
-        fileIds = uploadedFiles.map((f) => f.id);
+        await Promise.all(files.map((file) => api.uploadFile(file, convId!)));
       } catch (error) {
         console.error("[v0] File upload error:", error);
         setIsUploading(false);
@@ -212,7 +208,6 @@ export function ChatLayout() {
         maxTokens: settings.maxTokens,
         title: !currentConversationId ? deriveTitle(content) : undefined,
         enableCodeExecution: true,
-      fileIds,
       },
       controller.signal
     );
