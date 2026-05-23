@@ -18,6 +18,93 @@ export interface ChatOptions {
   enableCodeExecution?: boolean;
 }
 
+// ---------------------------------------------------------------------------
+// AI SDK Data Stream Protocol parser
+//
+// Each line from the server is:  {type_code}:{json_value}
+//
+//   0  – text delta          0:"hello"
+//   2  – data annotation     2:[{"key":"value"}]
+//   d  – finish message      d:{"finishReason":"stop","usage":{...}}
+//   3  – error               3:"something went wrong"
+// ---------------------------------------------------------------------------
+function parseLine(
+  line: string,
+  fullResponse: string,
+  newConversationId: string | undefined,
+  conversationId: string | null,
+  callbacks: StreamCallbacks
+): { fullResponse: string; newConversationId: string | undefined; done: boolean } {
+  if (!line || !line.includes(":")) {
+    return { fullResponse, newConversationId, done: false };
+  }
+
+  const colonIdx = line.indexOf(":");
+  const typeCode = line.slice(0, colonIdx);
+  const rawValue = line.slice(colonIdx + 1);
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(rawValue);
+  } catch {
+    console.log("[chat] Failed to parse line value:", rawValue);
+    return { fullResponse, newConversationId, done: false };
+  }
+
+  switch (typeCode) {
+    // --- Text delta ---
+    case "0": {
+      const text = parsed as string;
+      console.log("[chat] Text delta:", text);
+      fullResponse += text;
+      callbacks.onToken(text);
+      break;
+    }
+
+    // --- Data annotations (array of objects) ---
+    case "2": {
+      const items = parsed as Record<string, unknown>[];
+      for (const item of items) {
+        console.log("[chat] Data annotation:", item);
+
+        // Capture conversation ID on new conversations
+        if (item.conversation_id && !conversationId) {
+          newConversationId = item.conversation_id as string;
+          console.log("[chat] New conversation ID:", newConversationId);
+        }
+
+        // Tool call events
+        if (item.type === "tool_call" && callbacks.onToolCall) {
+          console.log("[chat] Tool call received:", item.tool);
+          callbacks.onToolCall(item as unknown as ToolCall);
+        }
+      }
+      break;
+    }
+
+    // --- Finish message ---
+    case "d": {
+      const finish = parsed as { finishReason: string };
+      console.log("[chat] Stream finished, reason:", finish.finishReason, "conversationId:", newConversationId);
+      callbacks.onDone(fullResponse, newConversationId);
+      return { fullResponse, newConversationId, done: true };
+    }
+
+    // --- Error ---
+    case "3": {
+      const message = parsed as string;
+      console.log("[chat] Stream error from server:", message);
+      callbacks.onError(new Error(message));
+      return { fullResponse, newConversationId, done: true };
+    }
+
+    default:
+      console.log("[chat] Unknown type code:", typeCode, "value:", parsed);
+  }
+
+  return { fullResponse, newConversationId, done: false };
+}
+
 export async function streamChat(
   message: string,
   conversationId: string | null,
@@ -25,7 +112,6 @@ export async function streamChat(
   options: ChatOptions = {},
   signal?: AbortSignal
 ) {
-
   const token =
     typeof window !== "undefined"
       ? localStorage.getItem("access_token")
@@ -65,14 +151,11 @@ export async function streamChat(
       }),
     });
 
-
-    console.log("[v0] Chat response status:", response.status, response.ok);
+    console.log("[chat] Response status:", response.status, response.ok);
 
     if (!response.ok) {
-      const err = await response
-        .json()
-        .catch(() => ({ detail: "Stream error" }));
-      console.log("[v0] Chat error response:", err);
+      const err = await response.json().catch(() => ({ detail: "Stream error" }));
+      console.log("[chat] Error response:", err);
       callbacks.onError(new Error(err.detail));
       return;
     }
@@ -85,60 +168,45 @@ export async function streamChat(
 
     while (true) {
       const { done, value } = await reader.read();
+
       if (done) {
-        console.log("[v0] Stream done (reader finished), fullResponse length:", fullResponse.length);
+        // Reader closed without a `d:` finish line — call onDone defensively
+        console.log("[chat] Reader closed without finish line, fullResponse length:", fullResponse.length);
+        callbacks.onDone(fullResponse, newConversationId);
         break;
       }
 
       buffer += decoder.decode(value, { stream: true });
+
+      // Lines are separated by "\n" in the AI SDK data stream protocol
       const lines = buffer.split("\n");
-      buffer = lines.pop() || "";
+      buffer = lines.pop() ?? ""; // keep incomplete last line in the buffer
 
       for (const line of lines) {
-        console.log("[v0] Raw line:", JSON.stringify(line));
-        if (line.startsWith("data: ")) {
-          const data = line.slice(6);
-          console.log("[v0] Parsed data:", data);
-          if (data === "[DONE]") {
-            console.log("[v0] Received [DONE], calling onDone with conversationId:", newConversationId);
-            callbacks.onDone(fullResponse, newConversationId);
-            return;
-          }
-          try {
-            const parsed = JSON.parse(data);
-            console.log("[v0] Parsed JSON:", parsed);
-            
-            // Handle tool call events
-            if (parsed.type === "tool_call" && callbacks.onToolCall) {
-              console.log("[v0] Tool call received:", parsed.tool);
-              callbacks.onToolCall(parsed as ToolCall);
-              continue;
-            }
-            
-            // Handle regular content
-            if (parsed.content) {
-              fullResponse += parsed.content;
-              callbacks.onToken(parsed.content);
-            }
-            
-            // Capture new conversation ID
-            if (parsed.conversation_id && !conversationId) {
-              console.log("[v0] New conversation ID from stream:", parsed.conversation_id);
-              newConversationId = parsed.conversation_id;
-            }
-          } catch {
-            console.log("[v0] Failed to parse JSON from:", data);
-            // ignore malformed chunks
-          }
-        }
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+        console.log("[chat] Raw line:", JSON.stringify(trimmed));
+
+        const result = parseLine(
+          trimmed,
+          fullResponse,
+          newConversationId,
+          conversationId,
+          callbacks
+        );
+
+        fullResponse = result.fullResponse;
+        newConversationId = result.newConversationId;
+
+        if (result.done) return; // finish or error — we're done
       }
     }
-    console.log("[v0] Stream ended without [DONE], calling onDone");
-    callbacks.onDone(fullResponse, newConversationId);
   } catch (error) {
-    console.log("[v0] Stream error:", error);
-    callbacks.onError(
-      error instanceof Error ? error : new Error("Unknown error")
-    );
+    if ((error as Error).name === "AbortError") {
+      console.log("[chat] Stream aborted by user");
+      return;
+    }
+    console.log("[chat] Stream error:", error);
+    callbacks.onError(error instanceof Error ? error : new Error("Unknown error"));
   }
 }
