@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { api, Conversation, Message, ToolCall } from "@/lib/api";
 import { streamChat } from "@/lib/chat";
@@ -28,6 +28,10 @@ export function ChatLayout() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [abortController, setAbortController] = useState<AbortController | null>(null);
   const [toolCalls, setToolCalls] = useState<ToolCall[]>([]);
+
+  // When the stream completes for a brand-new conversation we already have
+  // all messages in local state — no need to refetch from the API.
+  const skipNextConversationLoad = useRef(false);
 
   useEffect(() => {
     setModel(settings.defaultModel as Model);
@@ -70,6 +74,12 @@ export function ChatLayout() {
 
   useEffect(() => {
     if (currentConversationId) {
+      // When the stream just created this conversation we already have
+      // the messages locally — don't blow them away with a reload.
+      if (skipNextConversationLoad.current) {
+        skipNextConversationLoad.current = false;
+        return;
+      }
       loadConversation(currentConversationId);
     } else {
       setMessages([]);
@@ -165,10 +175,11 @@ export function ChatLayout() {
           setStreamingContent("");
           setToolCalls([]);
 
-          // If the server gave us a brand-new conversation ID, select it now
-          // so the sidebar highlights the right item and subsequent messages
-          // are sent to the correct thread.
+          // If the server gave us a brand-new conversation ID, select it now.
+          // Flag the effect to skip fetching history since we already have
+          // the current messages in local state.
           if (serverConversationId && !currentConversationId) {
+            skipNextConversationLoad.current = true;
             setCurrentConversationId(serverConversationId);
           }
 
