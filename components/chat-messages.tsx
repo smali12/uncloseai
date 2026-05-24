@@ -154,14 +154,13 @@ function MessageBubble({ message }: { message: UIMessage }) {
         {/* Reasoning files are separate from output files in AI SDK 7 */}
         {reasoningFileParts.map((part, i) => {
           const filePart = part as Extract<NonNullable<UIMessage['parts']>[number], { type: 'reasoning-file' }>
-          const fileLabel = filePart.filename || 'Reasoning file'
           return (
             <div
               key={`${message.id}-reasoning-file-${i}`}
               className="rounded-2xl rounded-tl-sm bg-card border border-dashed border-border px-4 py-3 text-sm text-foreground/80"
             >
               <p className="text-xs text-muted-foreground mb-1">Reasoning file</p>
-              <p className="font-medium break-all">{fileLabel}</p>
+              <p className="font-medium break-all">Reasoning file attached</p>
               {filePart.mediaType && (
                 <p className="text-xs text-muted-foreground mt-1">{filePart.mediaType}</p>
               )}
