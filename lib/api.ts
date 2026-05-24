@@ -1,4 +1,5 @@
 const BASE_URL = "https://aibackend-production-5e6b.up.railway.app";
+export const API_BASE_URL = BASE_URL;
 
 export interface User {
   id: string;

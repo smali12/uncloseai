@@ -1,8 +1,9 @@
 "use client";
 
 import { useState } from "react";
-import { ToolCall } from "@/lib/api";
+import { API_BASE_URL, ToolCall } from "@/lib/api";
 import { cn } from "@/lib/utils";
+import { SandboxPreview } from "@/components/sandbox-preview";
 import {
   ChevronDown,
   ChevronRight,
@@ -19,6 +20,25 @@ import {
 
 interface ToolCallCardProps {
   toolCall: ToolCall;
+}
+
+function resolveArtifactUrl(artifact: string): string {
+  if (!artifact) return "";
+  if (artifact.startsWith("http://") || artifact.startsWith("https://")) {
+    return artifact;
+  }
+  if (artifact.startsWith("/")) {
+    return `${API_BASE_URL}${artifact}`;
+  }
+  return `${API_BASE_URL}/${artifact}`;
+}
+
+function getArtifactLanguage(toolName: string, artifactUrl: string): "react" | "html" {
+  const lower = artifactUrl.toLowerCase();
+  if (toolName.includes("react") || lower.endsWith(".tsx") || lower.endsWith(".jsx")) {
+    return "react";
+  }
+  return "html";
 }
 
 const TOOL_META: Record<
@@ -50,6 +70,10 @@ export function ToolCallCard({ toolCall }: ToolCallCardProps) {
   const hasOutput =
     result.stdout || result.stderr || result.content || result.error;
   const hasArtifacts = result.artifacts && result.artifacts.length > 0;
+  const previewArtifact = result.artifacts?.find((artifact) => {
+    const lower = artifact.toLowerCase();
+    return lower.endsWith(".html") || lower.endsWith(".htm") || lower.includes("preview");
+  });
 
   return (
     <div className="rounded-xl border border-border bg-card overflow-hidden my-2">
@@ -158,11 +182,12 @@ export function ToolCallCard({ toolCall }: ToolCallCardProps) {
               </p>
               <div className="flex flex-wrap gap-2">
                 {result.artifacts!.map((artifact, i) => {
+                  const artifactUrl = resolveArtifactUrl(artifact);
                   const filename = artifact.split("/").pop() || artifact;
                   return (
                     <a
                       key={i}
-                      href={artifact}
+                      href={artifactUrl}
                       target="_blank"
                       rel="noopener noreferrer"
                       className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-secondary/50 hover:bg-secondary text-[12px] text-foreground/80 transition-colors"
@@ -175,6 +200,17 @@ export function ToolCallCard({ toolCall }: ToolCallCardProps) {
               </div>
             </div>
           )}
+        </div>
+      )}
+
+      {/* Inline sandbox preview for web artifacts */}
+      {isExpanded && previewArtifact && (
+        <div className="px-4 pb-4">
+          <SandboxPreview
+            url={resolveArtifactUrl(previewArtifact)}
+            title="Sandbox Preview"
+            language={getArtifactLanguage(tool, previewArtifact)}
+          />
         </div>
       )}
     </div>

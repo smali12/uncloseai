@@ -1,8 +1,16 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { cn } from "@/lib/utils";
-import { ExternalLink, Maximize2, Minimize2, Code2, Eye } from "lucide-react";
+import {
+  ExternalLink,
+  Maximize2,
+  Minimize2,
+  Code2,
+  Eye,
+  Loader2,
+  RefreshCw,
+} from "lucide-react";
 
 interface SandboxPreviewProps {
   url: string;
@@ -17,6 +25,50 @@ export function SandboxPreview({
 }: SandboxPreviewProps) {
   const [isExpanded, setIsExpanded] = useState(false);
   const [activeTab, setActiveTab] = useState<"preview" | "code">("preview");
+  const [source, setSource] = useState("");
+  const [isLoadingSource, setIsLoadingSource] = useState(false);
+  const [sourceError, setSourceError] = useState<string | null>(null);
+
+  const loadSource = async (signal?: AbortSignal) => {
+    if (!url) return;
+
+    setIsLoadingSource(true);
+    setSourceError(null);
+
+    try {
+      const res = await fetch(url, { signal });
+      if (!res.ok) {
+        throw new Error(`Unable to load source (${res.status})`);
+      }
+      const text = await res.text();
+      setSource(text);
+    } catch (error) {
+      if (signal?.aborted) return;
+      setSource("");
+      setSourceError(error instanceof Error ? error.message : "Unable to load source");
+    } finally {
+      if (!signal?.aborted) {
+        setIsLoadingSource(false);
+      }
+    }
+  };
+
+  useEffect(() => {
+    if (activeTab !== "code") return;
+
+    const controller = new AbortController();
+    void loadSource(controller.signal);
+
+    return () => controller.abort();
+  }, [activeTab, url]);
+
+  if (!url) {
+    return (
+      <div className="rounded-xl border border-border bg-card p-4 my-3 text-sm text-muted-foreground">
+        No preview URL available.
+      </div>
+    );
+  }
 
   return (
     <div
@@ -100,8 +152,38 @@ export function SandboxPreview({
             sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
           />
         ) : (
-          <div className="h-full flex items-center justify-center text-muted-foreground text-sm bg-secondary/20">
-            <p>View source at <a href={url} target="_blank" rel="noopener noreferrer" className="underline hover:text-foreground">{url}</a></p>
+          <div className="h-full bg-secondary/20 overflow-auto">
+            {isLoadingSource ? (
+              <div className="h-full flex items-center justify-center text-muted-foreground text-sm gap-2">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Loading source...
+              </div>
+            ) : sourceError ? (
+              <div className="h-full flex flex-col items-center justify-center text-sm gap-3 px-4 text-center">
+                <p className="text-muted-foreground">{sourceError}</p>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => void loadSource()}
+                    className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md bg-secondary hover:bg-secondary/80 text-foreground transition-colors"
+                  >
+                    <RefreshCw className="h-3.5 w-3.5" />
+                    Retry
+                  </button>
+                  <a
+                    href={url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-muted-foreground hover:text-foreground underline"
+                  >
+                    Open source URL
+                  </a>
+                </div>
+              </div>
+            ) : (
+              <pre className="p-4 text-[12px] leading-relaxed font-mono text-foreground/90 whitespace-pre-wrap break-words">
+                <code>{source}</code>
+              </pre>
+            )}
           </div>
         )}
       </div>
