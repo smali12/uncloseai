@@ -1,6 +1,7 @@
 "use client"
 
 import { useChat } from "@ai-sdk/react"
+import type { UIMessage } from "ai"
 import { DefaultChatTransport } from "ai"
 import { useState, useCallback, useRef } from "react"
 import { api } from "@/lib/api"
@@ -13,6 +14,25 @@ export interface ChatOptions {
   maxTokens?: number
   enableTools?: boolean
   enableCodeExecution?: boolean
+}
+
+type TransportBody = {
+  messages?: Array<{
+    role?: string
+    content?: string | Array<{ type?: string; text?: string }>
+  }>
+}
+
+function extractUserTextFromContent(
+  content: string | Array<{ type?: string; text?: string }> | undefined,
+): string {
+  if (!content) return ""
+  if (typeof content === "string") return content
+
+  return content
+    .filter((part) => part?.type === "text" && typeof part.text === "string")
+    .map((part) => part.text as string)
+    .join("")
 }
 
 /**
@@ -51,17 +71,14 @@ export function useBackendChat(options: ChatOptions = {}) {
           })
         }
 
-        const body = init?.body ? JSON.parse(init.body as string) : {}
+        const body: TransportBody = init?.body ? JSON.parse(init.body as string) : {}
         const messages = body.messages || []
 
         // Extract the last user message for our backend
         const lastUserMessage = [...messages]
           .reverse()
-          .find((m: { role: string }) => m.role === "user")
-        const userMessageText =
-          lastUserMessage?.content?.[0]?.text ||
-          (typeof lastUserMessage?.content === "string" ? lastUserMessage.content : "") ||
-          ""
+          .find((m) => m.role === "user")
+        const userMessageText = extractUserTextFromContent(lastUserMessage?.content)
 
         const ourBody = {
           message: userMessageText,
@@ -130,7 +147,7 @@ export function useBackendChat(options: ChatOptions = {}) {
         setIsUploading(false)
       }
 
-      chat.sendMessage({ text })
+      return chat.sendMessage({ text })
     },
     [chat],
   )
@@ -142,7 +159,7 @@ export function useBackendChat(options: ChatOptions = {}) {
         setConversationId(id)
         try {
           const data = await api.getConversation(id)
-          const uiMessages = data.messages.map((m) => ({
+          const uiMessages: UIMessage[] = data.messages.map((m) => ({
             id: m.id,
             role: m.role as "user" | "assistant",
             content: m.content,

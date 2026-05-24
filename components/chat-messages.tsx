@@ -1,13 +1,11 @@
 'use client'
 
 import { useState, useRef, useEffect } from 'react'
-import type { UIMessage } from 'ai'
+import { isToolUIPart, type UIMessage } from 'ai'
 import { ToolCall } from '@/lib/api'
-import { cn } from '@/lib/utils'
 import { Copy, Check } from 'lucide-react'
 import { HtmlArtifact } from './html-artifact'
 import { ToolCallCard } from './tool-call-card'
-import { FilePreview, FileAttachmentList } from './file-attachment'
 
 interface ChatMessagesProps {
   messages: UIMessage[]
@@ -44,8 +42,8 @@ export function ChatMessages({
   return (
     <div className="flex-1 overflow-y-auto">
       <div className="max-w-3xl mx-auto px-6 py-10 flex flex-col gap-8">
-        {messages.map((message, i) => (
-          <MessageBubble key={message.id} message={message} index={i} />
+        {messages.map((message) => (
+          <MessageBubble key={message.id} message={message} />
         ))}
 
         {/* Tool calls during streaming */}
@@ -89,7 +87,7 @@ export function ChatMessages({
   )
 }
 
-function MessageBubble({ message, index }: { message: UIMessage; index: number }) {
+function MessageBubble({ message }: { message: UIMessage }) {
   const isUser = message.role === 'user'
 
   // Extract text from parts (UIMessage format) or fall back to content string
@@ -99,7 +97,9 @@ function MessageBubble({ message, index }: { message: UIMessage; index: number }
   const textContent = textParts.map((p) => p.text).join('')
 
   // Extract tool call parts
-  const toolParts = message.parts?.filter((p) => p.type.startsWith('tool-')) ?? []
+  const toolParts = message.parts?.filter(isToolUIPart) ?? []
+  const fileParts = message.parts?.filter((p) => p.type === 'file') ?? []
+  const reasoningFileParts = message.parts?.filter((p) => p.type === 'reasoning-file') ?? []
 
   if (isUser) {
     return (
@@ -118,11 +118,9 @@ function MessageBubble({ message, index }: { message: UIMessage; index: number }
       <div className="max-w-[85%] group flex flex-col gap-2">
         {/* Tool call cards from parts */}
         {toolParts.map((part, i) => {
-          const tp = part as unknown as {
+          const tp = part as {
             type: string
-            toolCallId: string
-            toolName: string
-            state: string
+            toolName?: string
             input?: unknown
             output?: unknown
           }
@@ -133,6 +131,42 @@ function MessageBubble({ message, index }: { message: UIMessage; index: number }
             result: (tp.output as ToolCall['result']) ?? { success: true, content: '' },
           }
           return <ToolCallCard key={i} toolCall={toolCall} />
+        })}
+
+        {/* File parts (AI SDK 7 canonical file message part) */}
+        {fileParts.map((part, i) => {
+          const filePart = part as Extract<NonNullable<UIMessage['parts']>[number], { type: 'file' }>
+          const fileLabel = filePart.filename || 'File attachment'
+          return (
+            <div
+              key={`${message.id}-file-${i}`}
+              className="rounded-2xl rounded-tl-sm bg-card border border-border px-4 py-3 text-sm text-foreground/90"
+            >
+              <p className="text-xs text-muted-foreground mb-1">File</p>
+              <p className="font-medium break-all">{fileLabel}</p>
+              {filePart.mediaType && (
+                <p className="text-xs text-muted-foreground mt-1">{filePart.mediaType}</p>
+              )}
+            </div>
+          )
+        })}
+
+        {/* Reasoning files are separate from output files in AI SDK 7 */}
+        {reasoningFileParts.map((part, i) => {
+          const filePart = part as Extract<NonNullable<UIMessage['parts']>[number], { type: 'reasoning-file' }>
+          const fileLabel = filePart.filename || 'Reasoning file'
+          return (
+            <div
+              key={`${message.id}-reasoning-file-${i}`}
+              className="rounded-2xl rounded-tl-sm bg-card border border-dashed border-border px-4 py-3 text-sm text-foreground/80"
+            >
+              <p className="text-xs text-muted-foreground mb-1">Reasoning file</p>
+              <p className="font-medium break-all">{fileLabel}</p>
+              {filePart.mediaType && (
+                <p className="text-xs text-muted-foreground mt-1">{filePart.mediaType}</p>
+              )}
+            </div>
+          )
         })}
 
         {/* Message text */}
