@@ -1,7 +1,8 @@
 'use client'
 
 import { useState, useRef, useEffect } from 'react'
-import { Message, ToolCall } from '@/lib/api'
+import type { UIMessage } from 'ai'
+import { ToolCall } from '@/lib/api'
 import { cn } from '@/lib/utils'
 import { Copy, Check } from 'lucide-react'
 import { HtmlArtifact } from './html-artifact'
@@ -9,7 +10,7 @@ import { ToolCallCard } from './tool-call-card'
 import { FilePreview, FileAttachmentList } from './file-attachment'
 
 interface ChatMessagesProps {
-  messages: Message[]
+  messages: UIMessage[]
   streamingContent: string
   isStreaming: boolean
   toolCalls?: ToolCall[]
@@ -31,7 +32,7 @@ export function ChatMessages({
     return (
       <div className="flex-1 flex flex-col items-center justify-center px-6 select-none">
         <p className="text-[28px] font-semibold tracking-tight text-foreground/90 text-balance text-center">
-          What&apos;s on your mind?
+          What's on your mind?
         </p>
         <p className="mt-2 text-sm text-muted-foreground text-center">
           Start typing below to begin a conversation.
@@ -88,89 +89,68 @@ export function ChatMessages({
   )
 }
 
-function MessageBubble({ message, index }: { message: Message; index: number }) {
+function MessageBubble({ message, index }: { message: UIMessage; index: number }) {
   const isUser = message.role === 'user'
-  const hasAttachments = message.attachments && message.attachments.length > 0
+
+  // Extract text from parts (UIMessage format) or fall back to content string
+  const textParts = message.parts?.filter(
+    (p): p is { type: 'text'; text: string } => p.type === 'text'
+  ) ?? []
+  const textContent = textParts.map((p) => p.text).join('')
+
+  // Extract tool call parts
+  const toolParts = message.parts?.filter((p) => p.type.startsWith('tool-')) ?? []
 
   if (isUser) {
     return (
       <div className="flex justify-end">
         <div className="max-w-[72%] flex flex-col gap-2 items-end">
-          {hasAttachments && (
-            <FileAttachmentList files={message.attachments!} />
-          )}
           <div className="rounded-2xl rounded-tr-sm bg-primary text-primary-foreground px-4 py-3 text-sm leading-relaxed">
-            <p className="whitespace-pre-wrap break-words">{message.content}</p>
+            <p className="whitespace-pre-wrap break-words">{textContent || ''}</p>
           </div>
         </div>
       </div>
     )
   }
 
-  // Check if message contains embedded tool calls (from history)
-  const { content, embeddedToolCalls } = parseMessageForToolCalls(message.content)
-
   return (
     <div className="flex justify-start">
       <div className="max-w-[85%] group flex flex-col gap-2">
-        {/* Embedded tool calls */}
-        {embeddedToolCalls.length > 0 && (
-          <div className="flex flex-col gap-2">
-            {embeddedToolCalls.map((tc, i) => (
-              <ToolCallCard key={i} toolCall={tc} />
-            ))}
-          </div>
-        )}
+        {/* Tool call cards from parts */}
+        {toolParts.map((part, i) => {
+          const tp = part as unknown as {
+            type: string
+            toolCallId: string
+            toolName: string
+            state: string
+            input?: unknown
+            output?: unknown
+          }
+          const toolCall: ToolCall = {
+            type: 'tool_call',
+            tool: tp.toolName || tp.type.replace('tool-', ''),
+            args: (tp.input as Record<string, unknown>) ?? {},
+            result: (tp.output as ToolCall['result']) ?? { success: true, content: '' },
+          }
+          return <ToolCallCard key={i} toolCall={toolCall} />
+        })}
 
-        {/* Message content */}
-        {content.trim() && (
+        {/* Message text */}
+        {textContent.trim() && (
           <div className="rounded-2xl rounded-tl-sm bg-card border border-border px-4 py-3 text-sm text-foreground leading-relaxed">
-            <MessageContent content={content} />
-          </div>
-        )}
-
-        {/* Attachments from assistant (sandbox-generated files) */}
-        {hasAttachments && (
-          <div className="flex flex-col gap-2">
-            {message.attachments!.map((file, i) => (
-              <FilePreview key={i} file={file} />
-            ))}
+            <MessageContent content={textContent} />
           </div>
         )}
 
         {/* Action row under assistant messages */}
-        {content.trim() && (
+        {textContent.trim() && (
           <div className="flex items-center gap-1 pl-1 opacity-0 group-hover:opacity-100 transition-opacity duration-150">
-            <CopyButton text={content} />
+            <CopyButton text={textContent} />
           </div>
         )}
       </div>
     </div>
   )
-}
-
-// Parse message content for embedded tool call markers
-function parseMessageForToolCalls(content: string): { content: string; embeddedToolCalls: ToolCall[] } {
-  const toolCalls: ToolCall[] = []
-  
-  // Look for tool call JSON blocks: ```tool_call\n{...}\n```
-  const toolCallRegex = /```tool_call\n([\s\S]*?)\n```/g
-  let match
-  let cleanContent = content
-
-  while ((match = toolCallRegex.exec(content)) !== null) {
-    try {
-      const parsed = JSON.parse(match[1])
-      if (parsed.type === 'tool_call' || parsed.tool) {
-        toolCalls.push(parsed as ToolCall)
-      }
-    } catch {
-      // Not valid JSON, skip
-    }
-    cleanContent = cleanContent.replace(match[0], '')
-  }
-
-  return { content: cleanContent.trim(), embeddedToolCalls: toolCalls }
 }
 
 function MessageContent({ content }: { content: string }) {
@@ -197,7 +177,6 @@ function MessageContent({ content }: { content: string }) {
 
           return (
             <div key={i} className="rounded-xl overflow-hidden border border-border">
-              {/* Code header */}
               <div className="flex items-center justify-between px-4 py-2 bg-secondary/70 border-b border-border">
                 <span className="text-[11px] font-mono text-muted-foreground">
                   {language || 'plaintext'}
@@ -213,7 +192,6 @@ function MessageContent({ content }: { content: string }) {
           )
         }
 
-        // Inline: bold **text**, inline code `code`
         return <InlineText key={i} text={part} />
       })}
     </div>
@@ -221,7 +199,6 @@ function MessageContent({ content }: { content: string }) {
 }
 
 function InlineText({ text }: { text: string }) {
-  // Split on inline code ticks and bold markers
   const segments = text.split(/(`[^`]+`|\*\*[^*]+\*\*)/g)
 
   return (
