@@ -1,10 +1,21 @@
-import { ToolCall } from "./api";
-
 const BASE_URL = "https://aibackend-production-5e6b.up.railway.app";
+
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
+
+export interface ToolCallEvent {
+  toolCallId: string;
+  toolName: string;
+  args: unknown;       // accumulated from a: deltas, parsed when result arrives
+  result?: unknown;
+  isError?: boolean;
+}
 
 export interface StreamCallbacks {
   onToken: (text: string) => void;
-  onToolCall?: (toolCall: ToolCall) => void;
+  /** Fired when a tool result (b:) arrives — gives you the complete call + result. */
+  onToolCall?: (event: ToolCallEvent) => void;
   onDone: (fullText: string, conversationId?: string) => void;
   onError: (error: Error) => void;
 }
@@ -19,27 +30,31 @@ export interface ChatOptions {
 }
 
 // ---------------------------------------------------------------------------
-// AI SDK Data Stream Protocol parser
-//
-// Each line from the server is:  {type_code}:{json_value}
+// AI SDK UI Message Stream parser
 //
 //   0  – text delta          0:"hello"
-//   2  – data annotation     2:[{"key":"value"}]
+//   2  – data annotation     2:[{...}]          (our custom metadata)
+//   3  – error               3:"message"
+//   9  – tool call start     9:{"toolCallId":"...","toolName":"..."}
+//   a  – tool call delta     a:{"toolCallId":"...","argsTextDelta":"..."}
+//   b  – tool result         b:{"toolCallId":"...","result":...}
+//   e  – finish step         e:{"finishReason":"...","isContinued":true}
 //   d  – finish message      d:{"finishReason":"stop","usage":{...}}
-//   3  – error               3:"something went wrong"
 // ---------------------------------------------------------------------------
+
 function parseLine(
   line: string,
-  fullResponse: string,
-  newConversationId: string | undefined,
-  conversationId: string | null,
+  state: {
+    fullResponse: string;
+    conversationId: string | undefined;
+    // In-flight tool calls: toolCallId → ToolCallEvent
+    pendingToolCalls: Map<string, ToolCallEvent>;
+  },
   callbacks: StreamCallbacks
-): { fullResponse: string; newConversationId: string | undefined; done: boolean } {
-  if (!line || !line.includes(":")) {
-    return { fullResponse, newConversationId, done: false };
-  }
-
+): { done: boolean } {
   const colonIdx = line.indexOf(":");
+  if (colonIdx === -1) return { done: false };
+
   const typeCode = line.slice(0, colonIdx);
   const rawValue = line.slice(colonIdx + 1);
 
@@ -47,63 +62,127 @@ function parseLine(
   try {
     parsed = JSON.parse(rawValue);
   } catch {
-    console.log("[chat] Failed to parse line value:", rawValue);
-    return { fullResponse, newConversationId, done: false };
+    console.warn("[chat] Failed to parse stream line:", rawValue);
+    return { done: false };
   }
 
   switch (typeCode) {
-    // --- Text delta ---
+    // ── Text delta ──────────────────────────────────────────────────────────
     case "0": {
       const text = parsed as string;
-      console.log("[chat] Text delta:", text);
-      fullResponse += text;
+      state.fullResponse += text;
       callbacks.onToken(text);
       break;
     }
 
-    // --- Data annotations (array of objects) ---
+    // ── Data annotation (custom metadata from our Python backend) ──────────
     case "2": {
       const items = parsed as Record<string, unknown>[];
       for (const item of items) {
-        console.log("[chat] Data annotation:", item);
-
-        // Capture conversation ID on new conversations
-        if (item.conversation_id && !conversationId) {
-          newConversationId = item.conversation_id as string;
-          console.log("[chat] New conversation ID:", newConversationId);
-        }
-
-        // Tool call events
-        if (item.type === "tool_call" && callbacks.onToolCall) {
-          console.log("[chat] Tool call received:", item.tool);
-          callbacks.onToolCall(item as unknown as ToolCall);
+        if (typeof item.conversation_id === "string" && !state.conversationId) {
+          state.conversationId = item.conversation_id;
+          console.log("[chat] conversation_id:", state.conversationId);
         }
       }
       break;
     }
 
-    // --- Finish message ---
-    case "d": {
-      const finish = parsed as { finishReason: string };
-      console.log("[chat] Stream finished, reason:", finish.finishReason, "conversationId:", newConversationId);
-      callbacks.onDone(fullResponse, newConversationId);
-      return { fullResponse, newConversationId, done: true };
+    // ── Error ───────────────────────────────────────────────────────────────
+    case "3": {
+      callbacks.onError(new Error(parsed as string));
+      return { done: true };
     }
 
-    // --- Error ---
-    case "3": {
-      const message = parsed as string;
-      console.log("[chat] Stream error from server:", message);
-      callbacks.onError(new Error(message));
-      return { fullResponse, newConversationId, done: true };
+    // ── Tool call start ─────────────────────────────────────────────────────
+    case "9": {
+      const { toolCallId, toolName } = parsed as { toolCallId: string; toolName: string };
+      state.pendingToolCalls.set(toolCallId, {
+        toolCallId,
+        toolName,
+        args: "",   // will be built up from a: deltas
+      });
+      console.log("[chat] Tool call started:", toolName, toolCallId);
+      break;
+    }
+
+    // ── Tool call input delta ────────────────────────────────────────────────
+    case "a": {
+      const { toolCallId, argsTextDelta } = parsed as {
+        toolCallId: string;
+        argsTextDelta: string;
+      };
+      const tc = state.pendingToolCalls.get(toolCallId);
+      if (tc) {
+        tc.args = (tc.args as string) + argsTextDelta;
+      }
+      break;
+    }
+
+    // ── Tool result ──────────────────────────────────────────────────────────
+    case "b": {
+      const { toolCallId, result, isError } = parsed as {
+        toolCallId: string;
+        result: unknown;
+        isError?: boolean;
+      };
+      const tc = state.pendingToolCalls.get(toolCallId);
+      if (tc) {
+        // Parse accumulated args string into an object
+        let parsedArgs: unknown = tc.args;
+        try {
+          parsedArgs = JSON.parse(tc.args as string);
+        } catch {
+          // leave as raw string if not valid JSON
+        }
+
+        const event: ToolCallEvent = {
+          ...tc,
+          args: parsedArgs,
+          result,
+          isError: isError ?? false,
+        };
+
+        console.log(
+          `[chat] Tool result for ${tc.toolName}:`,
+          isError ? "ERROR" : "OK",
+          result
+        );
+
+        callbacks.onToolCall?.(event);
+        state.pendingToolCalls.delete(toolCallId);
+      }
+      break;
+    }
+
+    // ── Finish step ──────────────────────────────────────────────────────────
+    case "e": {
+      const { finishReason, isContinued } = parsed as {
+        finishReason: string;
+        isContinued: boolean;
+      };
+      console.log("[chat] Step finished:", finishReason, "continued:", isContinued);
+      // Not exposed to the caller — it's an internal loop marker.
+      break;
+    }
+
+    // ── Finish message (stream complete) ─────────────────────────────────────
+    case "d": {
+      const { finishReason } = parsed as { finishReason: string };
+      console.log("[chat] Stream finished:", finishReason, "conversationId:", state.conversationId);
+      callbacks.onDone(state.fullResponse, state.conversationId);
+      return { done: true };
     }
 
     default:
-      console.log("[chat] Unknown type code:", typeCode, "value:", parsed);
+      console.log("[chat] Unknown type code:", typeCode, parsed);
   }
 
-  return { fullResponse, newConversationId, done: false };
+  return { done: false };
 }
+
+// ---------------------------------------------------------------------------
+// Public API
+// ---------------------------------------------------------------------------
 
 export async function streamChat(
   message: string,
@@ -113,9 +192,7 @@ export async function streamChat(
   signal?: AbortSignal
 ) {
   const token =
-    typeof window !== "undefined"
-      ? localStorage.getItem("access_token")
-      : null;
+    typeof window !== "undefined" ? localStorage.getItem("access_token") : null;
 
   if (!token) {
     callbacks.onError(new Error("Not authenticated"));
@@ -151,62 +228,50 @@ export async function streamChat(
       }),
     });
 
-    console.log("[chat] Response status:", response.status, response.ok);
-
     if (!response.ok) {
       const err = await response.json().catch(() => ({ detail: "Stream error" }));
-      console.log("[chat] Error response:", err);
       callbacks.onError(new Error(err.detail));
       return;
     }
 
     const reader = response.body!.getReader();
     const decoder = new TextDecoder();
-    let fullResponse = "";
     let buffer = "";
-    let newConversationId: string | undefined;
+
+    const state = {
+      fullResponse: "",
+      conversationId: conversationId ?? undefined,
+      pendingToolCalls: new Map<string, ToolCallEvent>(),
+    };
 
     while (true) {
       const { done, value } = await reader.read();
 
       if (done) {
-        // Reader closed without a `d:` finish line — call onDone defensively
-        console.log("[chat] Reader closed without finish line, fullResponse length:", fullResponse.length);
-        callbacks.onDone(fullResponse, newConversationId);
+        // Stream closed without a d: finish line — call onDone defensively
+        console.warn("[chat] Reader closed without finish line");
+        callbacks.onDone(state.fullResponse, state.conversationId);
         break;
       }
 
       buffer += decoder.decode(value, { stream: true });
 
-      // Lines are separated by "\n" in the AI SDK data stream protocol
       const lines = buffer.split("\n");
-      buffer = lines.pop() ?? ""; // keep incomplete last line in the buffer
+      buffer = lines.pop() ?? "";
 
       for (const line of lines) {
         const trimmed = line.trim();
         if (!trimmed) continue;
-        console.log("[chat] Raw line:", JSON.stringify(trimmed));
 
-        const result = parseLine(
-          trimmed,
-          fullResponse,
-          newConversationId,
-          conversationId,
-          callbacks
-        );
-
-        fullResponse = result.fullResponse;
-        newConversationId = result.newConversationId;
-
-        if (result.done) return; // finish or error — we're done
+        const { done: streamDone } = parseLine(trimmed, state, callbacks);
+        if (streamDone) return;
       }
     }
   } catch (error) {
     if ((error as Error).name === "AbortError") {
-      console.log("[chat] Stream aborted by user");
+      console.log("[chat] Stream aborted");
       return;
     }
-    console.log("[chat] Stream error:", error);
     callbacks.onError(error instanceof Error ? error : new Error("Unknown error"));
   }
 }
