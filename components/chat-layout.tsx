@@ -163,8 +163,17 @@ export function ChatLayout() {
         },
 
         onToolCall: (tc) => {
-          console.log("[chat] Tool call received:", tc.tool);
-          setToolCalls((prev) => [...prev, tc]);
+          console.log("[chat] Tool call received:", tc.toolName);
+          const toolCall: ToolCall = {
+            type: "tool_call",
+            tool: tc.toolName,
+            args: typeof tc.args === "object" && tc.args !== null ? tc.args as Record<string, unknown> : {},
+            result: (tc.result as ToolCall["result"]) || {
+              success: tc.isError ? false : true,
+              error: tc.isError ? "Tool execution failed" : undefined,
+            },
+          };
+          setToolCalls((prev) => [...prev, toolCall]);
         },
 
         onDone: async (fullText, serverConversationId) => {
